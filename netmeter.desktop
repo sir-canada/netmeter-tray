@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=netmeter
+Comment=Scan-lined network speed meter in the system tray
+Exec=netmeter
+Icon=network-transmit-receive
+Categories=Network;Monitor;Qt;
+Terminal=false
+X-GNOME-Autostart-enabled=true
