@@ -235,8 +235,8 @@ class ConfigWindow(QWidget):
 
         btns = QHBoxLayout()
         btns.addStretch(1)
-        for text, slot in (("Apply", self._apply),
-                           ("OK", self._ok),
+        for text, slot in (("OK", self._ok),
+                           ("Apply", self._apply),
                            ("Cancel", self.close)):
             b = QPushButton(text)
             b.clicked.connect(slot)
