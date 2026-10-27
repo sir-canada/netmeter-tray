@@ -11,6 +11,9 @@ Apply = preview changes live, OK = apply + close, Cancel = discard.
 
 Each enabled device contributes rate/max as a percentage; percentages of
 all devices are summed and shown as the bar level.
+
+Left-click opens click_url in the default browser (focuses the existing
+window if the browser is already running).
 """
 
 import copy
@@ -21,9 +24,9 @@ import subprocess
 import sys
 import time
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QDoubleValidator, QIcon, \
-    QPainter, QPixmap
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, \
+    QDoubleValidator, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QScrollArea,
@@ -47,6 +50,7 @@ DEFAULT_CONFIG = {
     "interval_ms": 500,      # poll interval
     "smoothing": 0.5,        # 0 = raw, 0.95 = very smooth
     "double_click_cmd": "",  # app to spawn on double-click
+    "click_url": "http://127.0.0.1:62651/",  # opened in browser on left-click
     "smart_color": True,     # brightness follows bar fill level
     "smart_strength": 0.7,   # 0 = off, 1 = max effect
 }
@@ -522,6 +526,7 @@ class NetMeter:
         self.disp_down = 0.0   # smoothed 0..1
         self.disp_up = 0.0
         self.config_win = None
+        self._last_open = 0.0   # debounce: don't spawn a tab per click
 
         self.tray = QSystemTrayIcon(render_icon(0, 0, self.cfg["segments"]))
         menu = QMenu()
@@ -551,7 +556,15 @@ class NetMeter:
         self.config_win.activateWindow()
 
     def on_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            now = time.monotonic()
+            if now - self._last_open < 3.0:
+                return
+            url = self.cfg.get("click_url", "").strip()
+            if url:
+                self._last_open = now
+                QDesktopServices.openUrl(QUrl(url))
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             cmd = self.cfg.get("double_click_cmd", "").strip()
             if cmd:
                 try:
