@@ -12,17 +12,26 @@ Apply = preview changes live, OK = apply + close, Cancel = discard.
 Each enabled device contributes rate/max as a percentage; percentages of
 all devices are summed and shown as the bar level.
 
-Left-click opens click_url in the default browser (focuses the existing
-window if the browser is already running).
+Left-click opens click_url in the default browser. When click_url is
+empty, porthawk's dashboard is opened instead, resolving its port from
+~/.config/porthawk/port so a changed port keeps working. The browser
+window is then raised: under Wayland the compositor refuses to let one
+app focus another, so kdotool (KDE) or xdotool (X11) does it via the
+browser window's page title. Without either tool the tab still opens,
+it just isn't focused.
 """
 
 import copy
+import html
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
+import urllib.request
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, \
@@ -50,7 +59,7 @@ DEFAULT_CONFIG = {
     "interval_ms": 500,      # poll interval
     "smoothing": 0.5,        # 0 = raw, 0.95 = very smooth
     "double_click_cmd": "",  # app to spawn on double-click
-    "click_url": "http://127.0.0.1:62651/",  # opened in browser on left-click
+    "click_url": "",         # browser tab on left-click, "" = porthawk
     "smart_color": True,     # brightness follows bar fill level
     "smart_strength": 0.7,   # 0 = off, 1 = max effect
 }
@@ -99,6 +108,79 @@ def load_config():
     for name, d in cfg["devices"].items():
         migrate_device(name, d)
     return cfg
+
+
+PORTHAWK_PORT_FILE = os.path.expanduser("~/.config/porthawk/port")
+
+
+def click_target(cfg):
+    """URL to open on left-click: click_url, else porthawk's dashboard."""
+    url = cfg.get("click_url", "").strip()
+    if url:
+        return url
+    try:
+        with open(PORTHAWK_PORT_FILE) as f:
+            port = int(f.read().strip())
+    except (OSError, ValueError):
+        return ""
+    return f"http://127.0.0.1:{port}/"
+
+
+def page_title(url):
+    """<title> of a local page, used to find its browser window."""
+    try:
+        with urllib.request.urlopen(url, timeout=1.0) as resp:
+            head = resp.read(65536).decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return ""
+    m = re.search(r"<title[^>]*>(.*?)</title>", head, re.I | re.S)
+    return html.unescape(m.group(1)).strip() if m else ""
+
+
+def focus_window(title):
+    """Raise the window whose title contains `title`.
+
+    Wayland forbids apps from raising another app's window (focus stealing
+    prevention), so xdg-open leaves the browser behind. kdotool drives KWin
+    scripting, which is allowed; xdotool covers X11 sessions.
+    """
+    if not title:
+        return False
+    # Anchored first: browser titles start with the page title, while a
+    # terminal sitting in a directory of the same name does not.
+    patterns = ("^" + re.escape(title), re.escape(title))
+    for tool in ("kdotool", "xdotool"):
+        act = [tool, "windowactivate"]
+        for pat in patterns:
+            try:
+                out = subprocess.run([tool, "search", "--name", pat],
+                                     capture_output=True, text=True,
+                                     timeout=3).stdout.split()
+            except (OSError, subprocess.SubprocessError):
+                break
+            for wid in out:
+                try:
+                    subprocess.run(act + [wid], capture_output=True,
+                                   timeout=3)
+                    return True
+                except (OSError, subprocess.SubprocessError):
+                    break
+    return False
+
+
+def open_and_focus(url, cache):
+    """Wait for `url`'s tab to appear, then raise its browser window.
+
+    Called after the tab is opened. Runs off the GUI thread: one HTTP GET
+    plus subprocesses, no Qt calls.
+    """
+    title = cache.get(url) or page_title(url)
+    if title:
+        cache[url] = title
+    for delay in (0.7, 0.7, 1.0):   # page may still be loading
+        time.sleep(delay)
+        if focus_window(title):
+            return
 
 
 def save_config(cfg):
@@ -504,6 +586,15 @@ class ConfigWindow(QWidget):
             ss.setEnabled(on)
         sc.toggled.connect(sc_toggled)
 
+        cu = QLineEdit(self.work.get("click_url", ""))
+        cu.setPlaceholderText("empty = porthawk dashboard")
+        cu.setToolTip("URL opened by a left-click on the tray icon. Empty "
+                      "opens porthawk at the port from "
+                      "~/.config/porthawk/port.")
+        cu.textChanged.connect(
+            lambda t: self.work.__setitem__("click_url", t))
+        form.addRow("Click URL", cu)
+
         dc = QLineEdit(self.work.get("double_click_cmd", ""))
         dc.setPlaceholderText("e.g.  konsole -e nethogs")
         dc.setToolTip("Command spawned when the tray icon is double-clicked. "
@@ -527,6 +618,7 @@ class NetMeter:
         self.disp_up = 0.0
         self.config_win = None
         self._last_open = 0.0   # debounce: don't spawn a tab per click
+        self._titles = {}       # url -> page title, for window focusing
 
         self.tray = QSystemTrayIcon(render_icon(0, 0, self.cfg["segments"]))
         menu = QMenu()
@@ -560,10 +652,13 @@ class NetMeter:
             now = time.monotonic()
             if now - self._last_open < 3.0:
                 return
-            url = self.cfg.get("click_url", "").strip()
+            url = click_target(self.cfg)
             if url:
                 self._last_open = now
                 QDesktopServices.openUrl(QUrl(url))
+                threading.Thread(target=open_and_focus,
+                                 args=(url, self._titles),
+                                 daemon=True).start()
         elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             cmd = self.cfg.get("double_click_cmd", "").strip()
             if cmd:

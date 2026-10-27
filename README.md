@@ -22,6 +22,9 @@ devices are summed and drawn as the bar level.
   only runs while the window is visible — zero cost otherwise.
 - **Double-click launcher** — spawn any command (e.g. `konsole -e nethogs`)
   by double-clicking the tray icon.
+- **Left-click to porthawk** — a left-click opens a URL (empty = porthawk's
+  dashboard, port read from `~/.config/porthawk/port`) and raises the
+  browser window, using `kdotool` on KDE/Wayland or `xdotool` on X11.
 - **Apply / OK / Cancel** — preview changes live before committing.
 - Tooltip with current totals. Config stored in
   `~/.config/netmeter/config.json`.
@@ -50,7 +53,7 @@ Right-click the tray icon → **Configure…**
 |---|---|
 | Devices | enable/disable per interface, rename, live ↓/↑ preview |
 | Sensitivity | per-device max download / max upload + unit, live preview |
-| General | bar segments, update interval, smoothing, smart color, double-click app |
+| General | bar segments, update interval, smoothing, smart color, click URL, double-click app |
 
 ## License
 
